@@ -23,8 +23,11 @@ async def main():
             location="Paris, France",
             max_listings=50
         )
-        print(scraper.get_metrics())
+        
+        print(f"Found {len(listings)} listings")
 ```
+
+For more examples, see the documentation.
 """
 
 from .scraper import (
@@ -39,7 +42,7 @@ from .scraper import (
 from .cache import CacheManager
 
 __version__ = "1.0.0"
-__author__ = "rabi3laser"
+__author__ = "SpyBnB Team"
 
 __all__ = [
     "AirbnbScraper",
