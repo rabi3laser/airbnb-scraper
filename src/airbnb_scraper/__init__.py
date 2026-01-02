@@ -1,6 +1,6 @@
 """
-Airbnb Scraper v3 - High-performance scraping library
-=====================================================
+Airbnb Scraper v3.1 - High-performance scraping library
+=======================================================
 
 Enhanced for algorithm-aligned grading with:
 - All 6 sub-category ratings (Guest Favorites criteria)
@@ -8,6 +8,9 @@ Enhanced for algorithm-aligned grading with:
 - Guest Favorites badge detection
 - Instant Book status
 - Min/max nights
+- **NEW: Calendar/availability scraping**
+- **NEW: Orphan night detection**
+- **NEW: Demand analysis**
 - Parallel requests (5x faster)
 - SQLite caching (1000x faster for cached data)
 - Automatic retry with exponential backoff
@@ -17,34 +20,30 @@ Enhanced for algorithm-aligned grading with:
 Quick Start:
 -----------
 ```python
-from pathlib import Path
-from airbnb_scraper import AirbnbScraper, ScraperConfig
+from airbnb_scraper import AirbnbScraper, CalendarScraper
 
 async def main():
-    config = ScraperConfig(cache_dir=Path("/tmp/cache"))
-    
-    async with AirbnbScraper(currency="EUR", config=config) as scraper:
-        # Search listings
-        listings = await scraper.search_listings(
-            location="Paris, France",
-            max_listings=50
-        )
-        
-        # Get detailed info with sub-ratings
+    # Search and get details
+    async with AirbnbScraper(currency="EUR") as scraper:
+        listings = await scraper.search_listings("Paris", max_listings=20)
         details = await scraper.get_listing_details(listings[0].airbnb_id)
-        print(f"Rating: {details.rating}")
-        print(f"Cleanliness: {details.rating_cleanliness}")
-        print(f"Guest Favorite: {details.is_guest_favorite}")
+    
+    # Get calendar/availability data
+    async with CalendarScraper(currency="EUR") as cal_scraper:
+        calendar = await cal_scraper.get_calendar("12345678", months=3)
         
-        # Get host profile
-        host = await scraper.get_host_profile(details.host_id)
-        print(f"Response rate: {host.response_rate}%")
+        print(f"Occupancy: {calendar.occupancy_rate}%")
+        print(f"Avg price: €{calendar.avg_price}")
+        
+        # Find orphan nights
+        from airbnb_scraper import find_orphan_nights
+        orphans = find_orphan_nights(calendar)
+        for o in orphans:
+            print(f"Orphan: {o['dates']} at €{o['avg_price']}")
 ```
-
-For more examples, see the documentation.
 """
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 __author__ = "SpyBnB Team"
 
 from .scraper import (
@@ -52,9 +51,17 @@ from .scraper import (
     ScraperConfig,
     ListingBasic,
     ListingDetails,
-    HostProfile,  # NEW
+    HostProfile,
     ScraperMetrics,
     AMENITIES_MAP,
+)
+
+from .calendar import (
+    CalendarScraper,
+    CalendarDay,
+    ListingCalendar,
+    find_orphan_nights,
+    calculate_demand_score,
 )
 
 from .cache import CacheManager
@@ -63,14 +70,19 @@ __all__ = [
     # Main classes
     "AirbnbScraper",
     "ScraperConfig", 
+    "CalendarScraper",  # NEW
     
     # Data classes
     "ListingBasic",
     "ListingDetails",
-    "HostProfile",  # NEW
+    "HostProfile",
     "ScraperMetrics",
+    "CalendarDay",      # NEW
+    "ListingCalendar",  # NEW
     
     # Utilities
     "CacheManager",
     "AMENITIES_MAP",
+    "find_orphan_nights",     # NEW
+    "calculate_demand_score", # NEW
 ]
