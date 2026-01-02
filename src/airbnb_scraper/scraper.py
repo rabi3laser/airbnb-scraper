@@ -1,5 +1,6 @@
 """
-Airbnb Scraper - Core scraping functionality
+Airbnb Scraper v3 - Enhanced for Algorithm-Aligned Grading
+Now extracts all fields needed for 2025 ranking analysis
 """
 
 import json
@@ -26,29 +27,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ScraperConfig:
-    """
-    Scraper configuration.
-    
-    Attributes:
-        min_request_interval: Seconds between sequential requests
-        max_concurrent_requests: Maximum parallel requests
-        max_retries: Number of retry attempts
-        retry_backoff_base: Base for exponential backoff
-        cache_dir: Directory for cache database
-        cache_ttl_search: Cache TTL for search results (seconds)
-        cache_ttl_details: Cache TTL for listing details (seconds)
-        request_timeout: HTTP request timeout
-    """
+    """Scraper configuration."""
     min_request_interval: float = 0.5
     max_concurrent_requests: int = 5
     max_retries: int = 3
     retry_backoff_base: float = 2.0
     cache_dir: Path = Path("/tmp/airbnb_scraper_cache")
-    cache_ttl_search: int = 3600  # 1 hour
-    cache_ttl_details: int = 86400  # 24 hours
+    cache_ttl_search: int = 3600
+    cache_ttl_details: int = 86400
     request_timeout: float = 30.0
-    
-    # API constants
     api_key: str = "d306zoyjsyarp7ifhu67rjxn52tv0t20"
     base_url: str = "https://www.airbnb.com"
     explore_hash: str = "13aa9971e70fbf5ab888f2a851c765ea098d8ae68c81e1f4ce06e2046d91b6ea"
@@ -76,7 +63,7 @@ AMENITIES_MAP = {
 
 
 # ============================================
-# DATA CLASSES
+# DATA CLASSES - ENHANCED FOR V2 GRADING
 # ============================================
 
 @dataclass
@@ -106,12 +93,17 @@ class ListingBasic:
     is_superhost: bool = False
     instant_bookable: bool = False
     is_new: bool = False
+    is_guest_favorite: bool = False  # NEW: Guest Favorites badge
+    wishlist_count: int = 0  # NEW: Popularity signal
     scraped_at: str = ""
 
 
 @dataclass 
 class ListingDetails:
-    """Detailed listing data from HTML parsing."""
+    """
+    Detailed listing data - Enhanced for v2 grading.
+    Includes all fields needed for Airbnb algorithm analysis.
+    """
     airbnb_id: str
     name: str
     url: str
@@ -122,28 +114,86 @@ class ListingDetails:
     beds: int = 0
     bathrooms: float = 0
     max_guests: int = 0
+    
+    # Pricing
     price_per_night: float = 0
     cleaning_fee: float = 0
     service_fee: float = 0
     total_price: float = 0
     currency: str = "EUR"
+    
+    # Location
     latitude: float = 0
     longitude: float = 0
     city: str = ""
+    neighborhood: str = ""
     address: str = ""
+    
+    # Overall rating
     rating: float = 0
     reviews_count: int = 0
+    
+    # Sub-category ratings (NEW - for Guest Favorites)
+    rating_cleanliness: float = 0
+    rating_accuracy: float = 0
+    rating_checkin: float = 0
+    rating_communication: float = 0
+    rating_location: float = 0
+    rating_value: float = 0
+    
+    # Host info
     host_id: str = ""
     host_name: str = ""
     host_is_superhost: bool = False
+    host_since: str = ""  # NEW
+    host_response_rate: int = 0  # NEW: 0-100
+    host_response_time: str = ""  # NEW: "within an hour", etc.
+    host_acceptance_rate: int = 0  # NEW: 0-100
+    
+    # Badges (NEW)
+    is_guest_favorite: bool = False
+    guest_favorite_percentile: int = 0  # 1, 5, 10 for top %
+    
+    # Booking settings (NEW - critical for ranking)
+    instant_bookable: bool = False
+    min_nights: int = 1
+    max_nights: int = 365
+    cancellation_policy: str = ""
+    
+    # Calendar (NEW)
+    calendar_updated: bool = True
+    
+    # Content
     images: List[str] = field(default_factory=list)
     amenities: List[str] = field(default_factory=list)
+    amenity_ids: List[int] = field(default_factory=list)
+    
+    # Engagement (NEW)
+    wishlist_count: int = 0
+    is_new: bool = False
+    
+    scraped_at: str = ""
+
+
+@dataclass
+class HostProfile:
+    """Host profile data - NEW for response metrics."""
+    host_id: str
+    name: str = ""
+    is_superhost: bool = False
+    response_rate: int = 100
+    response_time_hours: float = 1
+    acceptance_rate: int = 100
+    reviews_count: int = 0
+    listings_count: int = 0
+    host_since: str = ""
+    verified: bool = False
     scraped_at: str = ""
 
 
 @dataclass
 class ScraperMetrics:
-    """Performance metrics for monitoring."""
+    """Performance metrics."""
     requests_total: int = 0
     requests_success: int = 0
     requests_failed: int = 0
@@ -154,9 +204,7 @@ class ScraperMetrics:
     
     @property
     def success_rate(self) -> float:
-        if self.requests_total == 0:
-            return 0
-        return self.requests_success / self.requests_total * 100
+        return self.requests_success / max(self.requests_total, 1) * 100
     
     @property
     def elapsed_time(self) -> float:
@@ -181,14 +229,8 @@ class ScraperMetrics:
 
 class AirbnbScraper:
     """
-    High-performance Airbnb scraper.
-    
-    Features:
-    - Parallel requests (configurable concurrency)
-    - SQLite caching with TTL
-    - Automatic retry with exponential backoff
-    - Rate limiting to avoid blocks
-    - Comprehensive metrics
+    High-performance Airbnb scraper v3.
+    Enhanced for algorithm-aligned grading.
     """
     
     def __init__(
@@ -200,7 +242,6 @@ class AirbnbScraper:
         self.config = config or ScraperConfig()
         self.currency = currency
         self.locale = locale
-        
         self.metrics = ScraperMetrics()
         
         cache_db = self.config.cache_dir / "scraper_cache.db"
@@ -228,7 +269,6 @@ class AirbnbScraper:
         await self.close()
     
     async def close(self):
-        """Close HTTP client."""
         await self.client.aclose()
     
     async def _rate_limit(self):
@@ -239,7 +279,6 @@ class AirbnbScraper:
         self._last_request_time = asyncio.get_event_loop().time()
     
     async def _request_with_retry(self, method: str, url: str, **kwargs) -> Optional[httpx.Response]:
-        """Execute HTTP request with retry logic."""
         async with self._semaphore:
             await self._rate_limit()
             
@@ -289,6 +328,10 @@ class AirbnbScraper:
     def _cache_key(self, prefix: str, *args) -> str:
         data = f"{prefix}:{':'.join(str(a) for a in args)}"
         return hashlib.md5(data.encode()).hexdigest()
+    
+    # ============================================
+    # SEARCH METHODS
+    # ============================================
     
     async def search_listings(
         self,
@@ -397,7 +440,7 @@ class AirbnbScraper:
         price_bins: int = 5,
         use_cache: bool = True,
     ) -> List[ListingBasic]:
-        """Search by geographic bounding box with price binning."""
+        """Search by geographic bounding box."""
         logger.info(f"[BOUNDS] Searching with {price_bins} price bins")
         
         if not checkin or not checkout:
@@ -524,6 +567,9 @@ class AirbnbScraper:
                     amenity_ids = listing_data.get("amenityIds", [])
                     amenity_names = [AMENITIES_MAP.get(aid, f"Amenity_{aid}") for aid in amenity_ids]
                     
+                    # Check for Guest Favorite badge
+                    is_guest_favorite = listing_data.get("isGuestFavorite", False) or False
+                    
                     listing = ListingBasic(
                         airbnb_id=str(listing_data.get("id", "")),
                         name=listing_data.get("name", ""),
@@ -546,6 +592,7 @@ class AirbnbScraper:
                         is_superhost=listing_data.get("isSuperhost", False) or False,
                         instant_bookable=pricing.get("canInstantBook", False) or False,
                         is_new=listing_data.get("isNew", False) or False,
+                        is_guest_favorite=is_guest_favorite,
                         scraped_at=datetime.utcnow().isoformat(),
                     )
                     listings.append(listing)
@@ -553,13 +600,17 @@ class AirbnbScraper:
             logger.error(f"[PARSE] Error: {str(e)}")
         return listings
     
+    # ============================================
+    # DETAIL METHODS - ENHANCED
+    # ============================================
+    
     async def get_listing_details(
         self, listing_id: str,
         checkin: Optional[str] = None, checkout: Optional[str] = None,
         guests: int = 2, use_cache: bool = True
     ) -> Optional[ListingDetails]:
-        """Get detailed listing information."""
-        cache_key = self._cache_key("details", listing_id, checkin, checkout)
+        """Get detailed listing information with all ranking-relevant fields."""
+        cache_key = self._cache_key("details_v3", listing_id, checkin, checkout)
         
         if use_cache:
             cached = self.cache.get(cache_key)
@@ -578,10 +629,238 @@ class AirbnbScraper:
         if not response:
             return None
         
-        details = self._parse_html_details(response.text, listing_id)
+        details = self._parse_html_details_v3(response.text, listing_id)
         if details and use_cache:
             self.cache.set(cache_key, asdict(details), self.config.cache_ttl_details)
         return details
+    
+    def _parse_html_details_v3(self, html: str, listing_id: str) -> Optional[ListingDetails]:
+        """Enhanced HTML parsing for v3 - extracts all algorithm-relevant fields."""
+        details = ListingDetails(
+            airbnb_id=listing_id, name="",
+            url=f"https://www.airbnb.com/rooms/{listing_id}",
+            scraped_at=datetime.utcnow().isoformat()
+        )
+        
+        try:
+            # Parse JSON-LD schema
+            schema_pattern = r'<script[^>]*type="application/ld\+json"[^>]*>([^<]+)</script>'
+            schemas = re.findall(schema_pattern, html)
+            
+            for s in schemas:
+                try:
+                    data = json.loads(s)
+                    if data.get('@type') == 'VacationRental':
+                        details.name = data.get('name', '')
+                        details.description = data.get('description', '')
+                        details.latitude = float(data.get('latitude', 0) or 0)
+                        details.longitude = float(data.get('longitude', 0) or 0)
+                        details.images = data.get('image', [])[:30]
+                        
+                        addr = data.get('address', {})
+                        details.city = addr.get('addressLocality', '')
+                        details.neighborhood = addr.get('addressRegion', '')
+                        
+                        agg = data.get('aggregateRating', {})
+                        details.rating = float(agg.get('ratingValue', 0) or 0)
+                        details.reviews_count = int(agg.get('ratingCount', 0) or 0)
+                        
+                        occ = data.get('containsPlace', {}).get('occupancy', {})
+                        if occ:
+                            details.max_guests = int(occ.get('value', 0) or 0)
+                except json.JSONDecodeError:
+                    pass
+            
+            # Extract sub-ratings (Guest Favorites criteria)
+            rating_patterns = [
+                (r'"cleanliness":\s*(\d+\.?\d*)', 'rating_cleanliness'),
+                (r'"accuracy":\s*(\d+\.?\d*)', 'rating_accuracy'),
+                (r'"checkin":\s*(\d+\.?\d*)', 'rating_checkin'),
+                (r'"check_in":\s*(\d+\.?\d*)', 'rating_checkin'),
+                (r'"communication":\s*(\d+\.?\d*)', 'rating_communication'),
+                (r'"location":\s*(\d+\.?\d*)', 'rating_location'),
+                (r'"value":\s*(\d+\.?\d*)', 'rating_value'),
+            ]
+            
+            for pattern, field in rating_patterns:
+                match = re.search(pattern, html, re.IGNORECASE)
+                if match:
+                    setattr(details, field, float(match.group(1)))
+            
+            # Extract amenities
+            amenity_pattern = r'"amenities":\s*\[([^\]]+)\]'
+            amenity_matches = re.findall(amenity_pattern, html)
+            if amenity_matches:
+                try:
+                    amenities_list = json.loads("[" + amenity_matches[0] + "]")
+                    for a in amenities_list:
+                        if isinstance(a, dict) and a.get('available') and a.get('title'):
+                            details.amenities.append(a['title'])
+                except:
+                    pass
+            
+            # Fallback amenity extraction
+            if not details.amenities:
+                for aid, name in AMENITIES_MAP.items():
+                    if f'"id":{aid},' in html or f'"amenityId":{aid}' in html:
+                        details.amenities.append(name)
+                        details.amenity_ids.append(aid)
+            
+            # Host information
+            if '"isSuperhost":true' in html or '"is_superhost":true' in html:
+                details.host_is_superhost = True
+            
+            # Guest Favorites badge
+            if '"isGuestFavorite":true' in html or 'guest favorite' in html.lower():
+                details.is_guest_favorite = True
+            
+            # Check for top percentile
+            if 'top 1%' in html.lower():
+                details.guest_favorite_percentile = 1
+            elif 'top 5%' in html.lower():
+                details.guest_favorite_percentile = 5
+            elif 'top 10%' in html.lower():
+                details.guest_favorite_percentile = 10
+            
+            # Instant Book
+            if '"canInstantBook":true' in html or '"instant_bookable":true' in html:
+                details.instant_bookable = True
+            
+            # Host response metrics
+            response_rate_match = re.search(r'"responseRate":\s*(\d+)', html)
+            if response_rate_match:
+                details.host_response_rate = int(response_rate_match.group(1))
+            
+            response_time_match = re.search(r'"responseTime":\s*"([^"]+)"', html)
+            if response_time_match:
+                details.host_response_time = response_time_match.group(1)
+            
+            # Min/max nights
+            min_nights_match = re.search(r'"minNights":\s*(\d+)', html)
+            if min_nights_match:
+                details.min_nights = int(min_nights_match.group(1))
+            
+            max_nights_match = re.search(r'"maxNights":\s*(\d+)', html)
+            if max_nights_match:
+                details.max_nights = int(max_nights_match.group(1))
+            
+            # Pricing
+            price_patterns = [
+                r'"priceString":"[^\d]*(\d+)',
+                r'"rate":\s*\{\s*"amount":\s*(\d+)',
+                r'"price_per_night":\s*(\d+)',
+            ]
+            for pattern in price_patterns:
+                match = re.search(pattern, html)
+                if match:
+                    details.price_per_night = float(match.group(1))
+                    break
+            
+            cleaning_match = re.search(r'"cleaning_fee":\s*(\d+)', html)
+            if cleaning_match:
+                details.cleaning_fee = float(cleaning_match.group(1))
+            
+            # Host ID and name
+            host_id_match = re.search(r'"hostId":\s*"?(\d+)"?', html)
+            if host_id_match:
+                details.host_id = host_id_match.group(1)
+            
+            host_name_match = re.search(r'"hostName":\s*"([^"]+)"', html)
+            if host_name_match:
+                details.host_name = host_name_match.group(1)
+            
+            # Room details
+            bedrooms_match = re.search(r'"bedrooms":\s*(\d+)', html)
+            if bedrooms_match:
+                details.bedrooms = int(bedrooms_match.group(1))
+            
+            beds_match = re.search(r'"beds":\s*(\d+)', html)
+            if beds_match:
+                details.beds = int(beds_match.group(1))
+            
+            bathrooms_match = re.search(r'"bathrooms":\s*(\d+\.?\d*)', html)
+            if bathrooms_match:
+                details.bathrooms = float(bathrooms_match.group(1))
+                
+        except Exception as e:
+            logger.error(f"[PARSE_HTML] Error: {str(e)}")
+        
+        return details
+    
+    # ============================================
+    # HOST PROFILE - NEW
+    # ============================================
+    
+    async def get_host_profile(
+        self, host_id: str, use_cache: bool = True
+    ) -> Optional[HostProfile]:
+        """Get host profile with response metrics."""
+        cache_key = self._cache_key("host", host_id)
+        
+        if use_cache:
+            cached = self.cache.get(cache_key)
+            if cached:
+                self.metrics.requests_cached += 1
+                return HostProfile(**cached)
+        
+        url = f"{self.config.base_url}/users/show/{host_id}"
+        response = await self._request_with_retry("GET", url)
+        
+        if not response:
+            return None
+        
+        profile = self._parse_host_profile(response.text, host_id)
+        if profile and use_cache:
+            self.cache.set(cache_key, asdict(profile), self.config.cache_ttl_details)
+        
+        return profile
+    
+    def _parse_host_profile(self, html: str, host_id: str) -> HostProfile:
+        """Parse host profile page."""
+        profile = HostProfile(
+            host_id=host_id,
+            scraped_at=datetime.utcnow().isoformat()
+        )
+        
+        try:
+            # Response rate
+            rate_match = re.search(r'response rate[:\s]*(\d+)%', html, re.IGNORECASE)
+            if rate_match:
+                profile.response_rate = int(rate_match.group(1))
+            
+            # Response time
+            time_patterns = [
+                (r'within an hour', 1),
+                (r'within a few hours', 3),
+                (r'within a day', 24),
+            ]
+            for pattern, hours in time_patterns:
+                if re.search(pattern, html, re.IGNORECASE):
+                    profile.response_time_hours = hours
+                    break
+            
+            # Superhost
+            if 'superhost' in html.lower():
+                profile.is_superhost = True
+            
+            # Name
+            name_match = re.search(r'"name":\s*"([^"]+)"', html)
+            if name_match:
+                profile.name = name_match.group(1)
+            
+            # Reviews count
+            reviews_match = re.search(r'(\d+)\s*reviews?', html, re.IGNORECASE)
+            if reviews_match:
+                profile.reviews_count = int(reviews_match.group(1))
+                
+        except Exception as e:
+            logger.error(f"[PARSE_HOST] Error: {str(e)}")
+        
+        return profile
+    
+    # ============================================
+    # UTILITY METHODS
+    # ============================================
     
     async def enrich_listings(
         self, listings: List[ListingBasic],
@@ -608,69 +887,17 @@ class AirbnbScraper:
         logger.info(f"[ENRICH] Successfully enriched {len(enriched)}/{len(listings)}")
         return enriched
     
-    def _parse_html_details(self, html: str, listing_id: str) -> Optional[ListingDetails]:
-        details = ListingDetails(
-            airbnb_id=listing_id, name="",
-            url=f"https://www.airbnb.com/rooms/{listing_id}",
-            scraped_at=datetime.utcnow().isoformat()
-        )
-        
-        try:
-            schema_pattern = r'<script[^>]*type="application/ld\+json"[^>]*>([^<]+)</script>'
-            schemas = re.findall(schema_pattern, html)
-            
-            for s in schemas:
-                try:
-                    data = json.loads(s)
-                    if data.get('@type') == 'VacationRental':
-                        details.name = data.get('name', '')
-                        details.description = data.get('description', '')
-                        details.latitude = float(data.get('latitude', 0) or 0)
-                        details.longitude = float(data.get('longitude', 0) or 0)
-                        details.images = data.get('image', [])[:20]
-                        details.city = data.get('address', {}).get('addressLocality', '')
-                        agg = data.get('aggregateRating', {})
-                        details.rating = float(agg.get('ratingValue', 0) or 0)
-                        details.reviews_count = int(agg.get('ratingCount', 0) or 0)
-                        occ = data.get('containsPlace', {}).get('occupancy', {})
-                        if occ:
-                            details.max_guests = int(occ.get('value', 0) or 0)
-                except json.JSONDecodeError:
-                    pass
-            
-            amenity_pattern = r'"amenities":\s*\[([^\]]+)\]'
-            amenity_matches = re.findall(amenity_pattern, html)
-            if amenity_matches:
-                try:
-                    amenities_list = json.loads("[" + amenity_matches[0] + "]")
-                    for a in amenities_list:
-                        if isinstance(a, dict) and a.get('available') and a.get('title'):
-                            details.amenities.append(a['title'])
-                except:
-                    pass
-            
-            if '"isSuperhost":true' in html or '"is_superhost":true' in html:
-                details.host_is_superhost = True
-        except Exception as e:
-            logger.error(f"[PARSE_HTML] Error: {str(e)}")
-        
-        return details
-    
     def get_metrics(self) -> dict:
-        """Get performance metrics."""
         return self.metrics.to_dict()
     
     def reset_metrics(self):
-        """Reset performance metrics."""
         self.metrics = ScraperMetrics()
     
     def clear_cache(self):
-        """Clear all cached data."""
         self.cache.clear_all()
         logger.info("[CACHE] Cache cleared")
     
     def get_cache_stats(self) -> dict:
-        """Get cache statistics."""
         return self.cache.stats()
     
     @staticmethod
